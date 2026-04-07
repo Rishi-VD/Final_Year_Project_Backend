@@ -4,17 +4,10 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import accuracy_score
-import os
 
-# -----------------------------
-# Flask app setup
-# -----------------------------
 app = Flask(__name__)
 CORS(app)
 
-# -----------------------------
-# Routes
-# -----------------------------
 @app.route('/')
 def home():
     return "Backend Running ✅"
@@ -100,10 +93,5 @@ def upload_file():
         print("ERROR:", e)
         return jsonify({"error": str(e)})
 
-# -----------------------------
-# Deployment configuration for Vercel
-# -----------------------------
-# Vercel sets the PORT as environment variable
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, host="0.0.0.0", port=port)
+    app.run(debug=True)
