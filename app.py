@@ -8,6 +8,9 @@ from sklearn.metrics import accuracy_score
 app = Flask(__name__)
 CORS(app)
 
+# Explicitly expose the app for Vercel
+app = app 
+
 @app.route('/')
 def home():
     return "Backend Running ✅"
@@ -15,72 +18,75 @@ def home():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file part in the request"}), 400
+            
         file = request.files['file']
 
-        if not file:
-            return jsonify({"error": "No file"}), 400
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
 
         df = pd.read_csv(file)
 
-        # Convert Week → number
-        df['Week'] = df['Week'].str.extract('(\d+)').astype(int)
+        # 1. Clean Week column
+        df['Week'] = df['Week'].astype(str).str.extract('(\d+)').astype(int)
 
-        # Create Behaviour
-        df['Behaviour'] = df['FocusScore'].diff().apply(
+        # 2. Create Behaviour (Handling the first row NaN)
+        df['FocusDiff'] = df['FocusScore'].diff()
+        # We fill the first NaN with 0 so the first row isn't immediately deleted
+        df['FocusDiff'] = df['FocusDiff'].fillna(0) 
+        
+        df['Behaviour'] = df['FocusDiff'].apply(
             lambda x: "Improving" if x > 0 else ("Declining" if x < 0 else "Stable")
         )
 
-        df = df.dropna()
-
-        # ML
+        # 3. ML Preparation
         X = df[['FocusScore', 'Verbal', 'Visual', 'Physical', 'Written']]
         y = df['Behaviour']
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+        # Ensure we have enough data to split
+        if len(df) < 5:
+            return jsonify({"error": "Not enough data rows (minimum 5) for analytics"}), 400
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
         model = GradientBoostingClassifier()
         model.fit(X_train, y_train)
 
         y_pred = model.predict(X_test)
+        # Use zero_division to avoid errors if a class is missing in small datasets
         acc = accuracy_score(y_test, y_pred)
 
-        # Weekly data
+        # 4. Data Grouping for Frontend
         weekly_data = {}
-        for week in sorted(df['Week'].unique()):
-            weekly_data[f"Week {week}"] = df[df['Week']==week]['FocusScore'].tolist()
-
-        # Modality data
         modality_data = {}
         for week in sorted(df['Week'].unique()):
-            temp = df[df['Week']==week]
+            temp = df[df['Week'] == week]
+            weekly_data[f"Week {week}"] = temp['FocusScore'].tolist()
             modality_data[f"Week {week}"] = [
-                temp['Verbal'].mean(),
-                temp['Visual'].mean(),
-                temp['Physical'].mean(),
-                temp['Written'].mean()
+                round(temp['Verbal'].mean(), 2),
+                round(temp['Visual'].mean(), 2),
+                round(temp['Physical'].mean(), 2),
+                round(temp['Written'].mean(), 2)
             ]
 
-        # Metrics
+        # 5. Final Metrics
         overall_focus = round(df['FocusScore'].mean(), 2)
-
-        modalities = ['Verbal','Visual','Physical','Written']
+        modalities = ['Verbal', 'Visual', 'Physical', 'Written']
         dominant = max(modalities, key=lambda x: df[x].mean())
 
         weekly_avg = df.groupby('Week')['FocusScore'].mean()
         latest = weekly_avg.iloc[-1]
         prev = weekly_avg.iloc[-2] if len(weekly_avg) > 1 else latest
 
-        if latest > prev:
-            status = "Improving"
-        elif latest < prev:
-            status = "Declining"
-        else:
-            status = "Stable"
+        status = "Stable"
+        if latest > prev: status = "Improving"
+        elif latest < prev: status = "Declining"
 
         week_change = round(((latest - prev) / prev) * 100, 2) if prev != 0 else 0
 
         return jsonify({
-            "accuracy": round(acc,2),
+            "accuracy": round(acc, 2),
             "status": status,
             "overall_focus": overall_focus,
             "week_change": week_change,
@@ -90,8 +96,7 @@ def upload_file():
         })
 
     except Exception as e:
-        print("ERROR:", e)
-        return jsonify({"error": str(e)})
+        return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
-    app.run(debug=True)
+# DO NOT use app.run() for Vercel. 
+# Vercel uses the 'app' object directly.
